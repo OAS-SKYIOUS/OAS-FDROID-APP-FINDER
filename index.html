@@ -160,10 +160,9 @@
         const fetchRepo = async (repo) => {
             loadingStatus.textContent = `Fetching from ${repo.name}...`;
             
-            // **FIX for CORS Error**: Use a proxy to bypass browser's Same-Origin Policy.
-            // The F-Droid and IzzyDroid servers do not provide the necessary CORS headers
-            // for direct client-side requests. This proxy adds the headers for us.
-            const proxyUrl = 'https://corsproxy.io/?';
+            // **FIX for CORS Error**: Use a more reliable proxy to bypass browser's Same-Origin Policy.
+            // The previous proxy was returning 403 Forbidden errors.
+            const proxyUrl = 'https://api.allorigins.win/raw?url=';
             const requestUrl = `${proxyUrl}${encodeURIComponent(repo.url)}`;
 
             try {
@@ -263,8 +262,12 @@
                 card.className = 'bg-gray-800 rounded-xl shadow-lg overflow-hidden transform hover:-translate-y-1 transition-transform duration-300 flex flex-col border border-gray-700';
 
                 // Determine icon URL. Use the first available source's repo URL.
-                const iconRepo = app.sources[0].repoBaseUrl;
-                const iconUrl = app.icon ? `${iconRepo}${app.icon}` : 'https://placehold.co/72x72/1f2937/6b7280?text=N/A';
+                // We need to proxy the image URLs as well to avoid mixed content issues if the site is on HTTPS
+                const proxyUrl = 'https://api.allorigins.win/raw?url=';
+                const originalIconUrl = app.icon ? `${app.sources[0].repoBaseUrl}${app.icon}` : 'https://placehold.co/72x72/1f2937/6b7280?text=N/A';
+                // Only proxy the real icon URL, not the placeholder
+                const iconUrl = app.icon ? `${proxyUrl}${encodeURIComponent(originalIconUrl)}` : originalIconUrl;
+
 
                 card.innerHTML = `
                     <div class="p-5 flex flex-col flex-grow">
