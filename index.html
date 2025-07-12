@@ -159,11 +159,15 @@
          */
         const fetchRepo = async (repo) => {
             loadingStatus.textContent = `Fetching from ${repo.name}...`;
+            
+            // **FIX for CORS Error**: Use a proxy to bypass browser's Same-Origin Policy.
+            // The F-Droid and IzzyDroid servers do not provide the necessary CORS headers
+            // for direct client-side requests. This proxy adds the headers for us.
+            const proxyUrl = 'https://corsproxy.io/?';
+            const requestUrl = `${proxyUrl}${encodeURIComponent(repo.url)}`;
+
             try {
-                // Using a proxy to bypass potential CORS issues during development/testing
-                // const proxyUrl = 'https://cors-anywhere.herokuapp.com/';
-                // const response = await fetch(proxyUrl + repo.url);
-                const response = await fetch(repo.url);
+                const response = await fetch(requestUrl);
                 if (!response.ok) {
                     throw new Error(`HTTP error! status: ${response.status} for ${repo.name}`);
                 }
@@ -192,15 +196,27 @@
 
                 for (const packageName in data.apps) {
                     const appData = data.apps[packageName];
-                    const packageInfo = data.packages[packageName]?.[0] || {}; // Get the latest package info
+                    // Find the latest package info by assuming the first entry is the latest
+                    const latestPackageKey = Object.keys(data.packages[packageName] || {})[0];
+                    const packageInfo = data.packages[packageName]?.[latestPackageKey] || {};
 
                     if (mergedApps.has(packageName)) {
                         // App exists, merge repository source info
                         const existingApp = mergedApps.get(packageName);
                         existingApp.sources.push(repoInfo);
 
-                        // Optional: Logic to prefer the latest version's metadata can be added here
-                        // For now, we keep the first entry's metadata and just add the source.
+                        // Optional: Logic to prefer the latest version's metadata.
+                        // If the new package is newer, update the metadata.
+                        if (packageInfo.versionCode > existingApp.versionCode) {
+                           Object.assign(existingApp, {
+                                apkName: packageInfo.apkName,
+                                versionName: packageInfo.versionName,
+                                versionCode: packageInfo.versionCode,
+                                size: packageInfo.size,
+                                minSdkVersion: packageInfo.minSdkVersion,
+                                targetSdkVersion: packageInfo.targetSdkVersion,
+                           });
+                        }
 
                     } else {
                         // New app, add it to the map
@@ -246,7 +262,7 @@
                 const card = document.createElement('div');
                 card.className = 'bg-gray-800 rounded-xl shadow-lg overflow-hidden transform hover:-translate-y-1 transition-transform duration-300 flex flex-col border border-gray-700';
 
-                // Determine icon URL. Use the first available source.
+                // Determine icon URL. Use the first available source's repo URL.
                 const iconRepo = app.sources[0].repoBaseUrl;
                 const iconUrl = app.icon ? `${iconRepo}${app.icon}` : 'https://placehold.co/72x72/1f2937/6b7280?text=N/A';
 
