@@ -6,6 +6,9 @@
     <title>F-Droid & IzzyOnDroid App Browser</title>
     <!-- Tailwind CSS for styling -->
     <script src="https://cdn.tailwindcss.com"></script>
+    <!-- include pako from a CDN -->
+    <script src="https://cdn.jsdelivr.net/npm/pako@2.1.0/dist/pako.min.js"></script>
+
     <!-- Google Fonts: Inter -->
     <link rel="preconnect" href="https://fonts.googleapis.com">
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
@@ -157,26 +160,26 @@
          * @param {object} repo - The repository object from the CONFIGURATION.
          * @returns {Promise<object>} A promise that resolves with the parsed JSON data.
          */
-        const fetchRepo = async (repo) => {
-            loadingStatus.textContent = `Fetching from ${repo.name}...`;
-            
-            // **FIX for CORS Error**: Use a more reliable proxy to bypass browser's Same-Origin Policy.
-            // The previous proxy was returning 403 Forbidden errors.
-            const proxyUrl = 'https://api.allorigins.win/raw?url=';
-            const requestUrl = `${proxyUrl}${encodeURIComponent(repo.url)}`;
+        async function fetchRepo(repo) {
+  loadingStatus.textContent = `Fetching from ${repo.name} (gzipped)…`;
 
-            try {
-                const response = await fetch(requestUrl);
-                if (!response.ok) {
-                    throw new Error(`HTTP error! status: ${response.status} for ${repo.name}`);
-                }
-                return await response.json();
-            } catch (error) {
-                console.error(`Failed to fetch data from ${repo.name}:`, error);
-                loadingStatus.textContent = `Error fetching from ${repo.name}. Some apps may be missing.`;
-                return null; // Return null on failure to handle gracefully
-            }
-        };
+  // point at the .jar (which is just a gzip of index-v1.json)
+  const url = repo.url.replace('index-v2.json', 'index-v1.jar');
+
+  try {
+    const resp = await fetch(url);
+    if (!resp.ok) throw new Error(`HTTP ${resp.status}`);
+    const compressed = new Uint8Array(await resp.arrayBuffer());
+    // inflate to a UTF-8 string
+    const jsonText = pako.inflate(compressed, { to: 'string' });
+    return JSON.parse(jsonText);
+  } catch (err) {
+    console.error(`Failed to fetch ${repo.name}:`, err);
+    loadingStatus.textContent = `Error fetching from ${repo.name}.`;
+    return null;
+  }
+};
+
 
         /**
          * Merges app data from all configured repositories.
