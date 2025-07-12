@@ -1,0 +1,311 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>F-Droid & IzzyOnDroid App Browser</title>
+    <!-- Tailwind CSS for styling -->
+    <script src="https://cdn.tailwindcss.com"></script>
+    <!-- Google Fonts: Inter -->
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
+    <style>
+        /* Custom styles */
+        body {
+            font-family: 'Inter', sans-serif;
+            background-color: #111827; /* bg-gray-900 */
+            color: #d1d5db; /* text-gray-300 */
+        }
+        /* Simple spinner animation */
+        .spinner {
+            border: 4px solid rgba(255, 255, 255, 0.2);
+            border-left-color: #3b82f6; /* blue-500 */
+            border-radius: 50%;
+            width: 50px;
+            height: 50px;
+            animation: spin 1s linear infinite;
+        }
+        @keyframes spin {
+            to { transform: rotate(360deg); }
+        }
+        /* Custom scrollbar for better aesthetics */
+        ::-webkit-scrollbar {
+            width: 8px;
+        }
+        ::-webkit-scrollbar-track {
+            background: #1f2937; /* bg-gray-800 */
+        }
+        ::-webkit-scrollbar-thumb {
+            background: #4b5563; /* bg-gray-600 */
+            border-radius: 4px;
+        }
+        ::-webkit-scrollbar-thumb:hover {
+            background: #6b7280; /* bg-gray-500 */
+        }
+        /* Style for the repository source tags */
+        .repo-tag {
+            display: inline-block;
+            padding: 0.25rem 0.75rem;
+            border-radius: 9999px;
+            font-size: 0.75rem;
+            font-weight: 600;
+            text-transform: uppercase;
+            letter-spacing: 0.05em;
+        }
+    </style>
+</head>
+<body class="antialiased">
+
+    <div id="app" class="container mx-auto p-4 md:p-8">
+        <!-- Header Section -->
+        <header class="text-center mb-8">
+            <h1 class="text-4xl md:text-5xl font-bold text-white mb-2">F-Droid App Explorer</h1>
+            <p class="text-lg text-gray-400">Browse apps from F-Droid and IzzyOnDroid repositories</p>
+        </header>
+
+        <!-- Search and Filter Section -->
+        <div class="mb-8 sticky top-4 z-10 bg-gray-900/80 backdrop-blur-sm p-4 rounded-xl shadow-lg border border-gray-700">
+            <input type="text" id="searchInput" placeholder="Search by name, package, or summary..." class="w-full p-3 bg-gray-800 border border-gray-600 rounded-lg text-white placeholder-gray-400 focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-blue-500 transition duration-300">
+        </div>
+
+        <!-- Loading Indicator -->
+        <div id="loading" class="flex flex-col items-center justify-center h-64">
+            <div class="spinner mb-4"></div>
+            <p class="text-lg text-gray-400">Fetching app repositories...</p>
+            <p id="loading-status" class="text-sm text-gray-500 mt-2"></p>
+        </div>
+
+        <!-- App Count Display -->
+        <div id="appCount" class="text-center mb-6 text-gray-400 font-medium hidden"></div>
+
+        <!-- Apps Grid -->
+        <div id="appsGrid" class="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-6">
+            <!-- App cards will be injected here by JavaScript -->
+        </div>
+
+        <!-- No Results Message -->
+        <div id="noResults" class="text-center py-16 hidden">
+            <h3 class="text-2xl font-semibold text-white">No applications found</h3>
+            <p class="text-gray-400 mt-2">Try adjusting your search query.</p>
+        </div>
+    </div>
+
+    <script>
+        // --- CONFIGURATION ---
+        const REPOSITORIES = [
+            {
+                name: 'F-Droid',
+                url: 'https://f-droid.org/repo/index-v2.json',
+                repoBaseUrl: 'https://f-droid.org/repo/',
+                color: 'bg-blue-500 text-white'
+            },
+            {
+                name: 'IzzyOnDroid',
+                url: 'https://apt.izzysoft.de/fdroid/repo/index-v2.json',
+                repoBaseUrl: 'https://apt.izzysoft.de/fdroid/repo/',
+                color: 'bg-green-500 text-white'
+            }
+        ];
+
+        // --- DOM ELEMENTS ---
+        const loadingIndicator = document.getElementById('loading');
+        const loadingStatus = document.getElementById('loading-status');
+        const appsGrid = document.getElementById('appsGrid');
+        const searchInput = document.getElementById('searchInput');
+        const appCount = document.getElementById('appCount');
+        const noResults = document.getElementById('noResults');
+
+        let allApps = []; // To store the final merged list of apps
+
+        // --- UTILITY FUNCTIONS ---
+        /**
+         * Formats a Unix timestamp into a readable date string.
+         * @param {number} timestamp - The Unix timestamp in milliseconds.
+         * @returns {string} A formatted date string (e.g., "Jan 1, 2023").
+         */
+        const formatDate = (timestamp) => {
+            if (!timestamp) return 'N/A';
+            return new Date(timestamp).toLocaleDateString('en-US', {
+                year: 'numeric',
+                month: 'long',
+                day: 'numeric'
+            });
+        };
+
+        /**
+         * Sanitize HTML content to prevent XSS.
+         * A simple implementation that removes script tags.
+         * @param {string} htmlString - The HTML string to sanitize.
+         * @returns {string} Sanitized HTML string.
+         */
+        const sanitizeHTML = (htmlString) => {
+            if (!htmlString) return '';
+            const tempDiv = document.createElement('div');
+            tempDiv.innerHTML = htmlString;
+            const scripts = tempDiv.getElementsByTagName('script');
+            while (scripts.length) {
+                scripts[0].parentNode.removeChild(scripts[0]);
+            }
+            return tempDiv.innerHTML;
+        };
+
+        // --- CORE LOGIC ---
+
+        /**
+         * Fetches and parses the JSON index from a single repository.
+         * @param {object} repo - The repository object from the CONFIGURATION.
+         * @returns {Promise<object>} A promise that resolves with the parsed JSON data.
+         */
+        const fetchRepo = async (repo) => {
+            loadingStatus.textContent = `Fetching from ${repo.name}...`;
+            try {
+                // Using a proxy to bypass potential CORS issues during development/testing
+                // const proxyUrl = 'https://cors-anywhere.herokuapp.com/';
+                // const response = await fetch(proxyUrl + repo.url);
+                const response = await fetch(repo.url);
+                if (!response.ok) {
+                    throw new Error(`HTTP error! status: ${response.status} for ${repo.name}`);
+                }
+                return await response.json();
+            } catch (error) {
+                console.error(`Failed to fetch data from ${repo.name}:`, error);
+                loadingStatus.textContent = `Error fetching from ${repo.name}. Some apps may be missing.`;
+                return null; // Return null on failure to handle gracefully
+            }
+        };
+
+        /**
+         * Merges app data from all configured repositories.
+         * It uses the app's package name as the unique identifier.
+         */
+        const fetchAndMergeData = async () => {
+            const promises = REPOSITORIES.map(fetchRepo);
+            const results = await Promise.all(promises);
+            const mergedApps = new Map();
+
+            results.forEach((data, index) => {
+                if (!data || !data.apps) return; // Skip if fetch failed or data is malformed
+
+                const repoInfo = REPOSITORIES[index];
+                loadingStatus.textContent = `Processing data from ${repoInfo.name}...`;
+
+                for (const packageName in data.apps) {
+                    const appData = data.apps[packageName];
+                    const packageInfo = data.packages[packageName]?.[0] || {}; // Get the latest package info
+
+                    if (mergedApps.has(packageName)) {
+                        // App exists, merge repository source info
+                        const existingApp = mergedApps.get(packageName);
+                        existingApp.sources.push(repoInfo);
+
+                        // Optional: Logic to prefer the latest version's metadata can be added here
+                        // For now, we keep the first entry's metadata and just add the source.
+
+                    } else {
+                        // New app, add it to the map
+                        mergedApps.set(packageName, {
+                            ...appData,
+                            packageName: packageName,
+                            sources: [repoInfo],
+                            // Combine app metadata with latest package details
+                            apkName: packageInfo.apkName,
+                            versionName: packageInfo.versionName,
+                            versionCode: packageInfo.versionCode,
+                            size: packageInfo.size,
+                            minSdkVersion: packageInfo.minSdkVersion,
+                            targetSdkVersion: packageInfo.targetSdkVersion,
+                        });
+                    }
+                }
+            });
+
+            // Convert map to array and sort alphabetically by name
+            allApps = Array.from(mergedApps.values()).sort((a, b) => a.name.localeCompare(b.name));
+            loadingIndicator.style.display = 'none';
+            displayApps(allApps);
+        };
+
+        /**
+         * Renders the list of applications into the DOM.
+         * @param {Array<object>} apps - The array of app objects to display.
+         */
+        const displayApps = (apps) => {
+            appsGrid.innerHTML = ''; // Clear previous results
+
+            if (apps.length === 0) {
+                noResults.style.display = 'block';
+                appCount.style.display = 'none';
+            } else {
+                noResults.style.display = 'none';
+                appCount.textContent = `Showing ${apps.length} of ${allApps.length} total applications.`;
+                appCount.style.display = 'block';
+            }
+
+            apps.forEach(app => {
+                const card = document.createElement('div');
+                card.className = 'bg-gray-800 rounded-xl shadow-lg overflow-hidden transform hover:-translate-y-1 transition-transform duration-300 flex flex-col border border-gray-700';
+
+                // Determine icon URL. Use the first available source.
+                const iconRepo = app.sources[0].repoBaseUrl;
+                const iconUrl = app.icon ? `${iconRepo}${app.icon}` : 'https://placehold.co/72x72/1f2937/6b7280?text=N/A';
+
+                card.innerHTML = `
+                    <div class="p-5 flex flex-col flex-grow">
+                        <div class="flex items-start mb-4">
+                            <img src="${iconUrl}" onerror="this.onerror=null;this.src='https://placehold.co/72x72/1f2937/6b7280?text=N/A';" alt="${app.name} icon" class="w-16 h-16 rounded-lg mr-4 object-cover flex-shrink-0">
+                            <div class="flex-grow">
+                                <h3 class="text-xl font-bold text-white">${app.name}</h3>
+                                <p class="text-sm text-gray-400 break-all">${app.packageName}</p>
+                            </div>
+                        </div>
+                        <p class="text-gray-300 mb-4 text-sm flex-grow">${app.summary || 'No summary available.'}</p>
+                        
+                        <div class="text-xs text-gray-400 space-y-2 mb-4">
+                            <p><strong>Version:</strong> ${app.versionName || 'N/A'} (Code: ${app.versionCode || 'N/A'})</p>
+                            <p><strong>License:</strong> ${app.license || 'N/A'}</p>
+                            <p><strong>Last Updated:</strong> ${formatDate(app.lastUpdated)}</p>
+                            <p><strong>Categories:</strong> ${app.categories?.join(', ') || 'N/A'}</p>
+                        </div>
+
+                        <div class="mt-auto pt-4 border-t border-gray-700">
+                           <p class="text-sm font-semibold text-gray-300 mb-2">Available in:</p>
+                           <div class="flex flex-wrap gap-2">
+                                ${app.sources.map(s => `<span class="repo-tag ${s.color}">${s.name}</span>`).join('')}
+                           </div>
+                        </div>
+                    </div>
+                `;
+                appsGrid.appendChild(card);
+            });
+        };
+
+        /**
+         * Filters applications based on the search input value.
+         */
+        const handleSearch = () => {
+            const query = searchInput.value.toLowerCase().trim();
+            if (!query) {
+                displayApps(allApps);
+                return;
+            }
+
+            const filteredApps = allApps.filter(app => {
+                const nameMatch = app.name.toLowerCase().includes(query);
+                const packageMatch = app.packageName.toLowerCase().includes(query);
+                const summaryMatch = app.summary?.toLowerCase().includes(query);
+                return nameMatch || packageMatch || summaryMatch;
+            });
+
+            displayApps(filteredApps);
+        };
+
+        // --- INITIALIZATION ---
+        document.addEventListener('DOMContentLoaded', () => {
+            fetchAndMergeData();
+            searchInput.addEventListener('input', handleSearch);
+        });
+
+    </script>
+</body>
+</html>
